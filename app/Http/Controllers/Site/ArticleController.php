@@ -41,7 +41,7 @@ class ArticleController extends Controller
         $body = ArticleHtmlPresenter::stripLeadingTitleHeading($rawContent, (string) $article->title);
         $excerpt = trim((string) $article->excerpt);
         if ($excerpt !== '') {
-            $excerpt = ArticleHtmlPresenter::stripLeadingTitleHeading($excerpt, (string) $article->title);
+            $excerpt = ArticleHtmlPresenter::cleanExcerpt($excerpt, (string) $article->title, 180);
         }
 
         $contentHtml = ArticleTextAdPicker::injectIntoContentHtml(

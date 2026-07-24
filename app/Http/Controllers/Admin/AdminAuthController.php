@@ -7,9 +7,11 @@ use App\Models\Admin;
 use App\Support\AdminActivityLogger;
 use App\Support\AdminWeb;
 use App\Support\GeoFlow\AdminLoginLockService;
+use App\Support\GeoFlowSsoToken;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\View\View;
 use Throwable;
@@ -76,6 +78,44 @@ class AdminAuthController extends Controller
         $admin->forceFill(['last_login' => now()])->save();
         AdminActivityLogger::logFromRequest($request, $admin, 'auth:login', [
             'username' => (string) $admin->username,
+        ]);
+
+        return redirect()->intended(route('admin.dashboard'));
+    }
+
+    public function ssoLogin(Request $request): RedirectResponse
+    {
+        try {
+            $payload = GeoFlowSsoToken::decode((string) $request->query('token', ''));
+        } catch (Throwable) {
+            abort(403, 'Invalid GEOFlow SSO token.');
+        }
+
+        $ttlSeconds = max(1, (int) $payload['exp'] - time());
+        if (! Cache::add('geoflow:sso:nonce:'.sha1($payload['nonce']), true, $ttlSeconds)) {
+            abort(403, 'GEOFlow SSO token has already been used.');
+        }
+
+        $ssoAdminUsername = trim((string) config('geoflow.sso_admin_username', 'admin')) ?: 'admin';
+        /** @var Admin|null $admin */
+        $admin = Admin::query()
+            ->where('username', $ssoAdminUsername)
+            ->where('status', 'active')
+            ->first();
+
+        if (! $admin instanceof Admin) {
+            abort(403, 'GEOFlow SSO admin account is not available.');
+        }
+
+        Auth::guard('admin')->login($admin, true);
+        $request->session()->regenerate();
+
+        $admin->forceFill(['last_login' => now()])->save();
+        AdminActivityLogger::logFromRequest($request, $admin, 'auth:sso-login', [
+            'source' => 'nanshanlin-manage',
+            'website_user_id' => $payload['user_id'],
+            'website_username' => $payload['username'],
+            'website_role' => $payload['role'],
         ]);
 
         return redirect()->intended(route('admin.dashboard'));

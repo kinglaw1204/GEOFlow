@@ -69,6 +69,10 @@ Route::prefix($adminPrefix)->name('admin.')->middleware(['admin.locale'])->group
             : redirect()->route('admin.login');
     })->name('entry');
 
+    Route::get('sso-login', [AdminAuthController::class, 'ssoLogin'])
+        ->middleware('throttle:20,1')
+        ->name('sso-login');
+
     // 访客认证路由
     Route::middleware('guest:admin')->group(function () {
         Route::get('login', [AdminAuthController::class, 'showLoginForm'])->name('login');

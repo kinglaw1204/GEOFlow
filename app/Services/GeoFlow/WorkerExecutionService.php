@@ -18,6 +18,7 @@ use App\Support\GeoFlow\ApiKeyCrypto;
 use App\Support\GeoFlow\ArticleWorkflow;
 use App\Support\GeoFlow\ImageUrlNormalizer;
 use App\Support\GeoFlow\OpenAiRuntimeProvider;
+use App\Support\Site\ArticleHtmlPresenter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -120,7 +121,7 @@ class WorkerExecutionService
                 'task_id' => (int) $task->id,
                 'original_keyword' => $keyword,
                 'keywords' => $keyword,
-                'meta_description' => mb_substr($excerpt, 0, 120),
+                'meta_description' => $excerpt,
                 'status' => $workflow['status'],
                 'review_status' => $workflow['review_status'],
                 'is_ai_generated' => 1,
@@ -1010,14 +1011,9 @@ class WorkerExecutionService
      */
     private function buildExcerpt(string $content): string
     {
-        $plain = preg_replace('/[`#>*_\-\[\]\(\)]/u', ' ', $content) ?: $content;
-        $plain = preg_replace('/\s+/u', ' ', $plain) ?: $plain;
-        $plain = trim($plain);
-        if ($plain === '') {
-            return 'AI 生成内容摘要';
-        }
+        $excerpt = ArticleHtmlPresenter::excerptFromContent($content, '', 180);
 
-        return mb_substr($plain, 0, 180);
+        return $excerpt !== '' ? $excerpt : 'AI 生成内容摘要';
     }
 
     /**

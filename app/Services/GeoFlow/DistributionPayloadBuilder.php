@@ -27,6 +27,10 @@ class DistributionPayloadBuilder
         $content = (string) $article->content;
         $body = ArticleHtmlPresenter::stripLeadingTitleHeading($content, $title);
         $contentHtml = ArticleHtmlPresenter::markdownToHtml($body);
+        $excerpt = ArticleHtmlPresenter::cleanExcerpt((string) ($article->excerpt ?? ''), $title, 180);
+        if ($excerpt === '') {
+            $excerpt = ArticleHtmlPresenter::excerptFromContent($content, $title, 180);
+        }
         $heroImageUrl = $this->heroImageUrl($article);
 
         return [
@@ -37,13 +41,13 @@ class DistributionPayloadBuilder
                 'id' => (int) $article->id,
                 'title' => $title,
                 'slug' => (string) $article->slug,
-                'excerpt' => (string) ($article->excerpt ?? ''),
+                'excerpt' => $excerpt,
                 'content' => $content,
                 'content_format' => 'markdown',
                 'content_html' => $contentHtml,
                 'hero_image_url' => $heroImageUrl,
                 'keywords' => (string) ($article->keywords ?? ''),
-                'meta_description' => (string) ($article->meta_description ?? ''),
+                'meta_description' => ArticleHtmlPresenter::cleanExcerpt((string) ($article->meta_description ?? $excerpt), $title, 180) ?: $excerpt,
                 'status' => (string) $article->status,
                 'is_featured' => (bool) $article->is_featured,
                 'is_hot' => (bool) $article->is_hot,

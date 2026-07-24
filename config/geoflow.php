@@ -49,6 +49,10 @@ return [
     'initial_admin_username' => trim((string) env('GEOFLOW_ADMIN_USERNAME', 'admin')) ?: 'admin',
     'initial_admin_email' => trim((string) env('GEOFLOW_ADMIN_EMAIL', 'admin@example.com')) ?: 'admin@example.com',
     'initial_admin_password' => (string) env('GEOFLOW_ADMIN_PASSWORD', ''),
+    // 官网后台 SSO 自动登录共享密钥。必须与南山林官网 GEOFLOW_SSO_SECRET 保持一致。
+    'sso_secret' => (string) env('GEOFLOW_SSO_SECRET', ''),
+    // SSO 仅允许登录到这个既有 GEOFlow 管理员账号；不会自动创建账号或自动提权。
+    'sso_admin_username' => trim((string) env('GEOFLOW_SSO_ADMIN_USERNAME', 'admin')) ?: 'admin',
     // 欢迎弹窗「介绍」文案版本：变更后所有管理员会再次看到介绍弹窗
     'welcome_intro_version' => env('GEOFLOW_WELCOME_INTRO_VERSION', '2.1'),
     // GitHub version.json 地址；默认每天检查一次，可通过 GEOFLOW_UPDATE_CHECK_ENABLED=false 关闭

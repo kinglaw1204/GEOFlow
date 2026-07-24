@@ -10,6 +10,7 @@ use App\Models\Author;
 use App\Models\Category;
 use App\Models\Task;
 use App\Support\GeoFlow\ArticleWorkflow;
+use App\Support\Site\ArticleHtmlPresenter;
 use Illuminate\Support\Facades\DB;
 
 class ArticleGeoFlowService
@@ -66,7 +67,9 @@ class ArticleGeoFlowService
             $normalized['review_status']
         );
         $slug = $normalized['slug'] ?: ArticleWorkflow::generateUniqueSlug($normalized['title']);
-        $excerpt = $normalized['excerpt'] !== '' ? $normalized['excerpt'] : mb_substr(strip_tags($normalized['content']), 0, 200);
+        $excerpt = $normalized['excerpt'] !== ''
+            ? ArticleHtmlPresenter::cleanExcerpt($normalized['excerpt'], $normalized['title'], 180)
+            : ArticleHtmlPresenter::excerptFromContent($normalized['content'], $normalized['title'], 180);
 
         $article = Article::query()->create([
             'title' => $normalized['title'],
@@ -303,7 +306,20 @@ class ArticleGeoFlowService
             }
         }
 
-        foreach (['excerpt', 'keywords', 'meta_description'] as $field) {
+        if (array_key_exists('excerpt', $data)) {
+            $title = (string) ($normalized['title'] ?? $existing['title'] ?? '');
+            $content = (string) ($normalized['content'] ?? $existing['content'] ?? '');
+            $excerpt = trim((string) $data['excerpt']);
+            $normalized['excerpt'] = $excerpt !== ''
+                ? ArticleHtmlPresenter::cleanExcerpt($excerpt, $title, 180)
+                : ArticleHtmlPresenter::excerptFromContent($content, $title, 180);
+        } elseif (array_key_exists('title', $normalized) || array_key_exists('content', $normalized)) {
+            $title = (string) ($normalized['title'] ?? $existing['title'] ?? '');
+            $content = (string) ($normalized['content'] ?? $existing['content'] ?? '');
+            $normalized['excerpt'] = ArticleHtmlPresenter::excerptFromContent($content, $title, 180);
+        }
+
+        foreach (['keywords', 'meta_description'] as $field) {
             if (array_key_exists($field, $data)) {
                 $normalized[$field] = trim((string) $data[$field]);
             }

@@ -52,26 +52,104 @@ final class ArticleHtmlPresenter
     {
         $excerpt = trim((string) $article->excerpt);
         if ($excerpt !== '') {
-            $excerpt = self::stripLeadingTitleHeading($excerpt, (string) $article->title);
-            $excerpt = preg_replace('/!\[[^\]]*\]\([^)]+\)/u', '', $excerpt) ?? $excerpt;
-            $plain = self::toPlainLine($excerpt);
-
-            return mb_strlen($plain) > $limit ? mb_substr($plain, 0, $limit).'…' : $plain;
+            return self::cleanExcerpt($excerpt, (string) $article->title, $limit);
         }
 
         $body = self::stripLeadingTitleHeading((string) $article->content, (string) $article->title);
-        $body = preg_replace('/!\[[^\]]*\]\([^)]+\)/u', '', $body) ?? $body;
-        $plain = self::toPlainLine($body);
 
-        return mb_strlen($plain) > $limit ? mb_substr($plain, 0, $limit).'…' : $plain;
+        return self::cleanExcerpt($body, (string) $article->title, $limit);
+    }
+
+    /**
+     * 统一清洗文章摘要，避免标题、核心摘要标签和半截句子进入前台/分发。
+     */
+    public static function cleanExcerpt(string $text, string $title = '', int $limit = 180): string
+    {
+        $plain = self::excerptSourcePlainText($text, $title);
+        if ($plain === '') {
+            return '';
+        }
+
+        return self::truncateAtSentence($plain, $limit);
+    }
+
+    public static function excerptFromContent(string $content, string $title = '', int $limit = 180): string
+    {
+        $body = self::stripLeadingTitleHeading($content, $title);
+        $coreSummary = self::coreSummaryText($body);
+
+        return self::cleanExcerpt($coreSummary !== '' ? $coreSummary : $body, $title, $limit);
+    }
+
+    private static function coreSummaryText(string $content): string
+    {
+        if (! preg_match('/^\s*#{1,3}\s*核心摘要\s*(?:\r?\n)+([\s\S]*?)(?=^\s*#{1,6}\s+\S|\z)/um', $content, $matches)) {
+            return '';
+        }
+
+        $lines = preg_split('/\r?\n/u', trim((string) $matches[1])) ?: [];
+        $summaryLines = [];
+        foreach ($lines as $line) {
+            $line = trim((string) $line);
+            $line = preg_replace('/^\s*(?:[-*+]|[0-9]+[.、])\s*/u', '', $line) ?? $line;
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+
+            $summaryLines[] = $line;
+            if (mb_strlen(implode(' ', $summaryLines)) >= 120 || count($summaryLines) >= 2) {
+                break;
+            }
+        }
+
+        return trim(implode(' ', $summaryLines));
     }
 
     private static function toPlainLine(string $text): string
     {
+        $text = preg_replace('/!\[[^\]]*\]\([^)]+\)/u', ' ', $text) ?? $text;
+        $text = preg_replace('/^\s*#{1,6}\s*核心摘要\s*$/um', ' ', $text) ?? $text;
         $text = preg_replace('/[#*_`>\[\]()]/u', ' ', $text) ?? $text;
         $text = preg_replace('/\s+/u', ' ', $text) ?? $text;
 
         return trim($text);
+    }
+
+    private static function excerptSourcePlainText(string $text, string $title): string
+    {
+        $text = self::stripLeadingTitleHeading($text, $title);
+        $plain = self::toPlainLine($text);
+        if ($title !== '') {
+            $plain = preg_replace('/^'.preg_quote($title, '/').'\s*/u', '', $plain, 1) ?? $plain;
+        }
+        $plain = preg_replace('/^核心摘要\s*/u', '', $plain, 1) ?? $plain;
+
+        return trim($plain);
+    }
+
+    private static function truncateAtSentence(string $plain, int $limit): string
+    {
+        if (mb_strlen($plain) <= $limit) {
+            return self::ensureFinalPunctuation($plain);
+        }
+
+        $candidate = mb_substr($plain, 0, $limit);
+        if (preg_match('/^(.{60,}[。！？.!?])/u', $candidate, $matches)) {
+            return trim((string) $matches[1]);
+        }
+
+        return rtrim($candidate, " \t\n\r\0\x0B，、；;：:").'…';
+    }
+
+    private static function ensureFinalPunctuation(string $plain): string
+    {
+        $plain = trim($plain);
+        if ($plain === '' || preg_match('/[。！？.!?…]$/u', $plain) === 1) {
+            return $plain;
+        }
+
+        return $plain.'。';
     }
 
     private static function normalizeMarkdownImages(string $markdown): string
