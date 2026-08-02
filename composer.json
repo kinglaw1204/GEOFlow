@@ -6,7 +6,7 @@
     "keywords": ["laravel", "framework"],
     "license": "Apache-2.0",
     "require": {
-        "php": "^8.2",
+        "php": "^8.3",
         "laravel/ai": "^0.6.0",
         "laravel/framework": "^12.0",
         "laravel/horizon": "^5.45",
@@ -53,6 +53,10 @@
             "@php artisan config:clear --ansi",
             "@php artisan test"
         ],
+        "version:check": [
+            "@php artisan config:clear --ansi",
+            "@php artisan test --compact tests/Unit/ReleaseVersionMappingTest.php"
+        ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
@@ -81,6 +85,9 @@
         "optimize-autoloader": true,
         "preferred-install": "dist",
         "sort-packages": true,
+        "platform": {
+            "php": "8.3.0"
+        },
         "allow-plugins": {
             "pestphp/pest-plugin": true,
             "php-http/discovery": true

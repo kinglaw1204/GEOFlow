@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Article extends Model
@@ -22,6 +23,7 @@ class Article extends Model
         'category_id',
         'author_id',
         'task_id',
+        'source_title_id',
         'original_keyword',
         'keywords',
         'meta_description',
@@ -40,6 +42,7 @@ class Article extends Model
             'category_id' => 'integer',
             'author_id' => 'integer',
             'task_id' => 'integer',
+            'source_title_id' => 'integer',
             'view_count' => 'integer',
             'is_ai_generated' => 'integer',
             'is_hot' => 'boolean',
@@ -63,6 +66,11 @@ class Article extends Model
         return $this->belongsTo(Task::class, 'task_id');
     }
 
+    public function sourceTitle(): BelongsTo
+    {
+        return $this->belongsTo(Title::class, 'source_title_id');
+    }
+
     public function articleImages(): HasMany
     {
         return $this->hasMany(ArticleImage::class, 'article_id');
@@ -71,6 +79,16 @@ class Article extends Model
     public function reviews(): HasMany
     {
         return $this->hasMany(ArticleReview::class, 'article_id');
+    }
+
+    public function riskScans(): HasMany
+    {
+        return $this->hasMany(ArticleRiskScan::class, 'article_id');
+    }
+
+    public function latestRiskScan(): HasOne
+    {
+        return $this->hasOne(ArticleRiskScan::class, 'article_id')->latestOfMany('scanned_at');
     }
 
     public function taskRuns(): HasMany

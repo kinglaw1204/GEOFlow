@@ -1,7 +1,7 @@
 @php
     $currentAdmin = auth('admin')->user();
     $adminBrandName = $adminBrandName ?? \App\Support\AdminWeb::siteName();
-    $isSuperAdmin = $currentAdmin && method_exists($currentAdmin, 'isSuperAdmin') && $currentAdmin->isSuperAdmin();
+    $isSuperAdmin = $currentAdmin && method_exists($currentAdmin, 'canManageProtectedWorkflows') && $currentAdmin->canManageProtectedWorkflows();
     $adminRoleLabel = $isSuperAdmin ? __('admin.header.super_admin') : __('admin.header.admin');
     $updateNotification = is_array($adminUpdateNotificationPayload ?? null) ? $adminUpdateNotificationPayload : [];
     $updateState = is_array($updateNotification['state'] ?? null) ? $updateNotification['state'] : [];
@@ -28,11 +28,19 @@
         'ai_config' => ['route' => 'admin.ai.configurator', 'name' => __('admin.nav.ai_config')],
         'site_settings' => ['route' => 'admin.site-settings.index', 'name' => __('admin.nav.site_settings')],
     ];
+    if (!$isSuperAdmin) {
+        unset($menu['distribution']);
+    }
     if ($isSuperAdmin) {
         $menu['admin_users'] = ['route' => 'admin.admin-users.index', 'name' => __('admin.nav.admin_users')];
     }
     $subMap = [
         'admin.analytics' => 'analytics',
+        'admin.analytics.content' => 'analytics',
+        'admin.analytics.traffic' => 'analytics',
+        'admin.analytics.ai-visibility' => 'analytics',
+        'admin.analytics.leads' => 'analytics',
+        'admin.analytics.distribution' => 'analytics',
         'admin.system-updates.index' => 'dashboard',
         'admin.system-updates.check' => 'dashboard',
         'admin.system-updates.plan' => 'dashboard',
@@ -92,6 +100,7 @@
         'admin.knowledge-bases.detail.update' => 'materials',
         'admin.url-import' => 'materials',
         'admin.ai-models.index' => 'ai_config',
+        'admin.ai-source-providers.index' => 'ai_config',
         'admin.ai-prompts' => 'ai_config',
         'admin.site-settings.sensitive-words' => 'site_settings',
         'admin.site-settings.sensitive-words.store' => 'site_settings',

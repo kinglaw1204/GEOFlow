@@ -18,6 +18,7 @@ use App\Models\Title;
 use App\Models\TitleLibrary;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -43,7 +44,10 @@ class MaterialLibraryService
         'knowledge-bases',
     ];
 
-    public function __construct(private readonly KnowledgeChunkSyncService $chunkSyncService) {}
+    public function __construct(
+        private readonly KnowledgeChunkSyncCoordinator $chunkSyncCoordinator,
+        private readonly ManagedImageFileService $managedImages,
+    ) {}
 
     /**
      * @return array{types:list<array{type:string,count:int}>}
@@ -69,7 +73,7 @@ class MaterialLibraryService
     public function list(string $type, int $page = 1, int $perPage = 20, array $filters = []): array
     {
         $type = $this->normalizeType($type);
-        $query = $this->buildListQuery($type);
+        $query = $this->buildListQuery($type, includeFullKnowledgeContent: false);
         $search = trim((string) ($filters['search'] ?? ''));
         if ($search !== '') {
             $this->applySearch($query, $type, $search);
@@ -153,28 +157,33 @@ class MaterialLibraryService
     }
 
     /**
-     * @return array{id:int,type:string,deleted:bool}
+     * @return array{id:int,type:string,deleted:bool,cleanup_failed_count:int}
      */
     public function delete(string $type, int $id): array
     {
         $type = $this->normalizeType($type);
         $row = $this->findMaterial($type, $id);
+        $imageFilePaths = [];
 
-        DB::transaction(function () use ($type, $row, $id): void {
+        DB::transaction(function () use ($type, $row, $id, &$imageFilePaths): void {
             match ($type) {
                 'categories' => $this->deleteCategory($id),
                 'authors' => $this->deleteAuthor($id),
                 'keyword-libraries' => $this->deleteKeywordLibrary($id),
                 'title-libraries' => $this->deleteTitleLibrary($id),
-                'image-libraries' => $this->deleteImageLibrary($id),
+                'image-libraries' => $imageFilePaths = $this->deleteImageLibrary($id),
                 'knowledge-bases' => $this->deleteKnowledgeBase($row),
             };
         });
+        $cleanupFailed = $imageFilePaths !== []
+            ? $this->managedImages->cleanupUnreferenced($imageFilePaths)
+            : 0;
 
         return [
             'id' => $id,
             'type' => $type,
             'deleted' => true,
+            'cleanup_failed_count' => $cleanupFailed,
         ];
     }
 
@@ -199,13 +208,85 @@ class MaterialLibraryService
         $type = $this->normalizeWritableItemType($type);
         $this->findMaterial($type, $parentId);
 
-        $row = DB::transaction(function () use ($type, $parentId, $data): Model {
-            return match ($type) {
-                'keyword-libraries' => $this->createKeywordItem($parentId, $data),
-                'title-libraries' => $this->createTitleItem($parentId, $data),
-                'image-libraries' => $this->createImageItem($parentId, $data),
-            };
-        });
+        $row = $type === 'image-libraries'
+            ? $this->createImageItem($parentId, $data)
+            : DB::transaction(function () use ($type, $parentId, $data): Model {
+                return match ($type) {
+                    'keyword-libraries' => $this->createKeywordItem($parentId, $data),
+                    'title-libraries' => $this->createTitleItem($parentId, $data),
+                };
+            });
+
+        return [
+            'type' => $type,
+            'parent_id' => $parentId,
+            'item' => $this->serializeItem($type, $row),
+        ];
+    }
+
+    /**
+     * 让 legacy file_path 创建在调用方完整事务期间持续持有路径锁。
+     *
+     * @param  array<string,mixed>  $data
+     */
+    public function withLegacyImagePathLock(string $type, array $data, callable $callback): mixed
+    {
+        $type = $this->normalizeWritableItemType($type);
+        if ($type !== 'image-libraries' || ! (bool) config('geoflow.legacy_image_path_input', false)) {
+            return $callback();
+        }
+
+        $submittedPath = $this->requiredString($data, 'file_path', '图片 file_path 不能为空', 500);
+        try {
+            return $this->managedImages->withExistingPathLock($submittedPath, fn (): mixed => $callback());
+        } catch (\InvalidArgumentException) {
+            $this->validationError('file_path', '图片 file_path 必须指向已存在的受管图片文件');
+        }
+    }
+
+    public function withUploadedImagePathLock(string $type, UploadedFile $image, callable $callback): mixed
+    {
+        $type = $this->normalizeWritableItemType($type);
+        if ($type !== 'image-libraries') {
+            $this->validationError('image', '仅图片库支持图片上传');
+        }
+
+        return $this->managedImages->withUploadedImagePathLock($image, $callback);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    public function createUploadedImageItem(string $type, int $parentId, UploadedFile $image): array
+    {
+        $type = $this->normalizeWritableItemType($type);
+        if ($type !== 'image-libraries') {
+            $this->validationError('image', '仅图片库支持图片上传');
+        }
+        $this->findMaterial($type, $parentId);
+        $stored = $this->managedImages->storeUploadedImage($image);
+        $connection = DB::connection();
+        $deferCompensation = $connection->transactionLevel() > 0;
+        if ($deferCompensation) {
+            $connection->afterRollBack(function () use ($stored): void {
+                $this->managedImages->discardStoredUpload($stored['file_path']);
+            });
+        }
+
+        try {
+            $row = DB::transaction(function () use ($parentId, $stored): Image {
+                $row = $this->createImageFromMetadata($parentId, $stored);
+                $this->refreshImageLibraryCount($parentId);
+
+                return $row;
+            });
+        } catch (\Throwable $exception) {
+            if (! $deferCompensation) {
+                $this->managedImages->discardStoredUpload($stored['file_path']);
+            }
+
+            throw $exception;
+        }
 
         return [
             'type' => $type,
@@ -216,7 +297,7 @@ class MaterialLibraryService
 
     /**
      * @param  array<string,mixed>  $data
-     * @return array{type:string,parent_id:int,deleted_count:int}
+     * @return array{type:string,parent_id:int,deleted_count:int,cleanup_failed_count:int}
      */
     public function deleteItems(string $type, int $parentId, array $data): array
     {
@@ -228,19 +309,24 @@ class MaterialLibraryService
                 'field_errors' => ['ids' => '请选择要删除的素材条目'],
             ]);
         }
+        $imageFilePaths = [];
 
-        $deletedCount = DB::transaction(function () use ($type, $parentId, $ids): int {
+        $deletedCount = DB::transaction(function () use ($type, $parentId, $ids, &$imageFilePaths): int {
             return match ($type) {
                 'keyword-libraries' => $this->deleteKeywordItems($parentId, $ids),
                 'title-libraries' => $this->deleteTitleItems($parentId, $ids),
-                'image-libraries' => $this->deleteImageItems($parentId, $ids),
+                'image-libraries' => $this->deleteImageItems($parentId, $ids, $imageFilePaths),
             };
         });
+        $cleanupFailed = $imageFilePaths !== []
+            ? $this->managedImages->cleanupUnreferenced($imageFilePaths)
+            : 0;
 
         return [
             'type' => $type,
             'parent_id' => $parentId,
             'deleted_count' => $deletedCount,
+            'cleanup_failed_count' => $cleanupFailed,
         ];
     }
 
@@ -287,7 +373,7 @@ class MaterialLibraryService
         return $type;
     }
 
-    private function buildListQuery(string $type): Builder
+    private function buildListQuery(string $type, bool $includeFullKnowledgeContent = true): Builder
     {
         return match ($type) {
             'categories' => Category::query()
@@ -319,7 +405,24 @@ class MaterialLibraryService
                 ->withSum('images as total_size', 'file_size')
                 ->orderByDesc('created_at'),
             'knowledge-bases' => KnowledgeBase::query()
-                ->select(['id', 'name', 'description', 'content', 'character_count', 'used_task_count', 'file_type', 'file_path', 'word_count', 'usage_count', 'created_at', 'updated_at'])
+                ->select([
+                    'id',
+                    'name',
+                    'description',
+                    'character_count',
+                    'used_task_count',
+                    'file_type',
+                    'file_path',
+                    'word_count',
+                    'usage_count',
+                    'chunk_sync_status',
+                    'chunk_sync_error',
+                    'created_at',
+                    'updated_at',
+                ])
+                ->selectRaw($includeFullKnowledgeContent
+                    ? 'content'
+                    : 'SUBSTR(content, 1, 4000) AS content')
                 ->withCount('chunks as chunk_count')
                 ->orderByDesc('created_at'),
         };
@@ -475,6 +578,8 @@ class MaterialLibraryService
                 'name' => (string) $row->name,
                 'description' => (string) ($row->description ?? ''),
                 'content' => (string) ($row->content ?? ''),
+                'content_truncated' => (int) ($row->character_count ?? 0)
+                    > mb_strlen((string) ($row->content ?? ''), 'UTF-8'),
                 'file_type' => (string) ($row->file_type ?? 'markdown'),
                 'file_path' => (string) ($row->file_path ?? ''),
                 'character_count' => (int) ($row->character_count ?? 0),
@@ -482,6 +587,8 @@ class MaterialLibraryService
                 'usage_count' => (int) ($row->usage_count ?? 0),
                 'used_task_count' => (int) ($row->used_task_count ?? 0),
                 'chunk_count' => (int) ($row->chunk_count ?? 0),
+                'chunk_sync_status' => (string) ($row->chunk_sync_status ?? 'idle'),
+                'chunk_sync_error' => (string) ($row->chunk_sync_error ?? ''),
                 'task_count' => (int) ($row->task_count ?? 0),
                 'created_at' => $this->formatDate($row->created_at ?? null),
                 'updated_at' => $this->formatDate($row->updated_at ?? null),
@@ -624,7 +731,7 @@ class MaterialLibraryService
     {
         $payload = $this->normalizeKnowledgePayload($data, false);
         $knowledgeBase = KnowledgeBase::query()->create($payload);
-        $this->chunkSyncService->sync((int) $knowledgeBase->id, (string) $payload['content']);
+        $this->requestKnowledgeChunkSync($knowledgeBase);
 
         return $knowledgeBase;
     }
@@ -635,7 +742,16 @@ class MaterialLibraryService
         $contentChanged = array_key_exists('content', $payload);
         $row->update($payload);
         if ($contentChanged) {
-            $this->chunkSyncService->sync((int) $row->id, (string) $payload['content']);
+            $this->requestKnowledgeChunkSync($row, true);
+        }
+    }
+
+    private function requestKnowledgeChunkSync(Model $knowledgeBase, bool $force = false): void
+    {
+        try {
+            $this->chunkSyncCoordinator->request((int) $knowledgeBase->id, force: $force);
+        } catch (\Throwable $exception) {
+            report($exception);
         }
     }
 
@@ -655,11 +771,17 @@ class MaterialLibraryService
         }
         if (array_key_exists('content', $data)) {
             $content = $this->requiredString($data, 'content', '知识库正文不能为空', 0);
+            if (strlen($content) > 8 * 1024 * 1024) {
+                $this->validationError('content', '知识库正文不能超过 8MB');
+            }
             $payload['content'] = $content;
             $payload['character_count'] = mb_strlen($content, 'UTF-8');
             $payload['word_count'] = mb_strlen(strip_tags($content), 'UTF-8');
         } elseif (! $isUpdate) {
             $content = $this->requiredString($data, 'content', '知识库正文不能为空', 0);
+            if (strlen($content) > 8 * 1024 * 1024) {
+                $this->validationError('content', '知识库正文不能超过 8MB');
+            }
             $payload['content'] = $content;
             $payload['character_count'] = mb_strlen($content, 'UTF-8');
             $payload['word_count'] = mb_strlen(strip_tags($content), 'UTF-8');
@@ -724,29 +846,62 @@ class MaterialLibraryService
 
     private function createImageItem(int $parentId, array $data): Image
     {
-        $filePath = $this->requiredString($data, 'file_path', '图片 file_path 不能为空', 500);
-        $filename = $this->optionalString($data, 'filename', 255);
-        if ($filename === '') {
-            $filename = basename($filePath);
+        if (! (bool) config('geoflow.legacy_image_path_input', false)) {
+            $this->validationError('file_path', '直接提交图片路径已禁用，请上传图片文件');
         }
 
-        $row = Image::query()->create([
+        $submittedPath = $this->requiredString($data, 'file_path', '图片 file_path 不能为空', 500);
+        try {
+            return $this->managedImages->withExistingPathLock($submittedPath, function (string $filePath) use ($parentId, $data): Image {
+                $filename = $this->optionalString($data, 'filename', 255);
+                if ($filename === '') {
+                    $filename = basename($filePath);
+                }
+
+                return DB::transaction(function () use ($parentId, $data, $filePath, $filename): Image {
+                    $row = $this->createImageFromMetadata($parentId, [
+                        'library_id' => $parentId,
+                        'filename' => $filename,
+                        'original_name' => $this->optionalString($data, 'original_name', 255) ?: $filename,
+                        'file_name' => $this->optionalString($data, 'file_name', 255) ?: $filename,
+                        'file_path' => $filePath,
+                        'managed_path_hash' => $this->managedImages->pathHash($filePath),
+                        'file_size' => max(0, (int) ($data['file_size'] ?? 0)),
+                        'mime_type' => $this->optionalString($data, 'mime_type', 100),
+                        'width' => max(0, (int) ($data['width'] ?? 0)),
+                        'height' => max(0, (int) ($data['height'] ?? 0)),
+                        'tags' => $this->optionalString($data, 'tags'),
+                    ]);
+                    $this->refreshImageLibraryCount($parentId);
+
+                    return $row;
+                });
+            });
+        } catch (\InvalidArgumentException) {
+            $this->validationError('file_path', '图片 file_path 必须指向已存在的受管图片文件');
+        }
+    }
+
+    /**
+     * @param  array<string,mixed>  $metadata
+     */
+    private function createImageFromMetadata(int $parentId, array $metadata): Image
+    {
+        return Image::query()->create([
             'library_id' => $parentId,
-            'filename' => $filename,
-            'original_name' => $this->optionalString($data, 'original_name', 255) ?: $filename,
-            'file_name' => $this->optionalString($data, 'file_name', 255) ?: $filename,
-            'file_path' => $filePath,
-            'file_size' => max(0, (int) ($data['file_size'] ?? 0)),
-            'mime_type' => $this->optionalString($data, 'mime_type', 100),
-            'width' => max(0, (int) ($data['width'] ?? 0)),
-            'height' => max(0, (int) ($data['height'] ?? 0)),
-            'tags' => $this->optionalString($data, 'tags'),
+            'filename' => (string) $metadata['filename'],
+            'original_name' => (string) $metadata['original_name'],
+            'file_name' => (string) $metadata['file_name'],
+            'file_path' => (string) $metadata['file_path'],
+            'managed_path_hash' => (string) $metadata['managed_path_hash'],
+            'file_size' => max(0, (int) $metadata['file_size']),
+            'mime_type' => (string) $metadata['mime_type'],
+            'width' => max(0, (int) $metadata['width']),
+            'height' => max(0, (int) $metadata['height']),
+            'tags' => (string) ($metadata['tags'] ?? ''),
             'used_count' => 0,
             'usage_count' => 0,
         ]);
-        $this->refreshImageLibraryCount($parentId);
-
-        return $row;
     }
 
     /**
@@ -774,13 +929,12 @@ class MaterialLibraryService
     /**
      * @param  list<int>  $ids
      */
-    private function deleteImageItems(int $parentId, array $ids): int
+    private function deleteImageItems(int $parentId, array $ids, array &$filePaths): int
     {
         $filePaths = Image::query()->where('library_id', $parentId)->whereIn('id', $ids)->pluck('file_path')->filter()->values()->all();
         ArticleImage::query()->whereIn('image_id', $ids)->delete();
         $deleted = Image::query()->where('library_id', $parentId)->whereIn('id', $ids)->delete();
         $this->refreshImageLibraryCount($parentId);
-        $this->cleanupFiles($filePaths);
 
         return $deleted;
     }
@@ -827,7 +981,7 @@ class MaterialLibraryService
         TitleLibrary::query()->whereKey($id)->delete();
     }
 
-    private function deleteImageLibrary(int $id): void
+    private function deleteImageLibrary(int $id): array
     {
         $taskCount = Task::query()->where('image_library_id', $id)->count();
         if ($taskCount > 0) {
@@ -838,7 +992,8 @@ class MaterialLibraryService
         ArticleImage::query()->whereIn('image_id', $imageIds)->delete();
         Image::query()->where('library_id', $id)->delete();
         ImageLibrary::query()->whereKey($id)->delete();
-        $this->cleanupFiles($filePaths);
+
+        return $filePaths;
     }
 
     private function deleteKnowledgeBase(Model $row): void

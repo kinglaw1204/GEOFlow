@@ -6,14 +6,18 @@ use App\Http\Controllers\Controller;
 use App\Models\AiModel;
 use App\Models\Article;
 use App\Models\SiteSetting;
+use App\Services\GeoFlow\AiUsageQuotaService;
+use App\Services\GeoFlow\AiUsageReservation;
+use App\Services\GeoFlow\AiVisibility\AiProviderEndpointPolicy;
+use App\Services\Outbound\SafeOutboundHttpClient;
 use App\Support\AdminWeb;
 use App\Support\GeoFlow\ApiKeyCrypto;
 use App\Support\GeoFlow\OpenAiRuntimeProvider;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
 use Throwable;
@@ -32,7 +36,13 @@ class AiModelController extends Controller
     /**
      * 注入统一 API Key 加解密工具，避免控制器内重复维护密钥兼容逻辑。
      */
-    public function __construct(private readonly ApiKeyCrypto $apiKeyCrypto) {}
+    public function __construct(
+        private readonly ApiKeyCrypto $apiKeyCrypto,
+        private readonly SafeOutboundHttpClient $safeHttp,
+        private readonly Factory $http,
+        private readonly AiUsageQuotaService $usageQuota,
+        private readonly AiProviderEndpointPolicy $endpointPolicy,
+    ) {}
 
     /**
      * AI 模型列表页。
@@ -137,6 +147,18 @@ class AiModelController extends Controller
         }
 
         $apiKey = trim((string) ($payload['api_key'] ?? ''));
+        $currentApiUrl = trim((string) ($model->api_url ?? ''));
+        $nextApiUrl = (string) $updateData['api_url'];
+        if ($apiKey === ''
+            && $currentApiUrl !== $nextApiUrl
+            && ! $this->endpointPolicy->sameOrigin($currentApiUrl, $nextApiUrl)) {
+            return back()
+                ->withInput($request->except('api_key'))
+                ->withErrors([
+                    'api_key' => __('admin.ai_models.error.api_key_required_for_origin_change'),
+                ]);
+        }
+
         if ($apiKey !== '') {
             try {
                 $updateData['api_key'] = $this->encryptApiKey($apiKey);
@@ -181,12 +203,13 @@ class AiModelController extends Controller
     /**
      * 测试单个 AI 模型的 API 连通性。
      *
-     * 只发起最小化请求，不增加模型调用统计，也不返回敏感密钥。
+     * 只发起最小化请求，并纳入统一每日额度与调用统计，不返回敏感密钥。
      */
     public function testConnection(int $modelId): JsonResponse
     {
         $model = AiModel::query()->whereKey($modelId)->firstOrFail();
         $startedAt = microtime(true);
+        $reservation = null;
 
         try {
             $modelType = $this->normalizeModelType((string) ($model->model_type ?? 'chat'));
@@ -205,23 +228,42 @@ class AiModelController extends Controller
                 return $this->modelTestResponse(false, __('admin.ai_models.test_error_model_missing'), $startedAt, $modelType, $endpoint);
             }
 
-            $request = Http::acceptJson()
+            $reservation = $this->usageQuota->reserveModel($model);
+            if ($reservation === null) {
+                return $this->modelTestResponse(
+                    false,
+                    __('admin.ai_models.test_error_daily_limit'),
+                    $startedAt,
+                    $modelType,
+                    $endpoint,
+                );
+            }
+
+            $request = $this->http->acceptJson()
                 ->asJson()
+                ->connectTimeout(8)
                 ->timeout(45);
 
             $request = $isGemini
                 ? $request->withHeaders(['x-goog-api-key' => $apiKey])
                 : $request->withToken($apiKey);
 
-            $response = $request->post($endpoint, $this->buildTestPayload($modelName, $modelType, $isGemini));
+            $response = $this->safeHttp->post(
+                $request,
+                $endpoint,
+                $this->buildTestPayload($modelName, $modelType, $isGemini),
+                (int) config('geoflow.outbound_ai_max_bytes', 8 * 1024 * 1024),
+            );
 
             $json = $response->json();
             if (! $response->successful()) {
+                $this->usageQuota->releaseModel($reservation);
+
                 return $this->modelTestResponse(
                     false,
                     __('admin.ai_models.test_failed_with_status', [
                         'status' => (string) $response->status(),
-                        'message' => $this->previewResponseBody($response->body()),
+                        'message' => $this->redactedRemoteDetail(),
                     ]),
                     $startedAt,
                     $modelType,
@@ -231,16 +273,24 @@ class AiModelController extends Controller
             }
 
             if (! $this->isValidTestResponse($json, $modelType, $isGemini)) {
+                $this->usageQuota->releaseModel($reservation);
+
                 return $this->modelTestResponse(
                     false,
                     __('admin.ai_models.test_invalid_response', [
-                        'message' => $this->previewResponseBody($response->body()),
+                        'message' => $this->redactedRemoteDetail(),
                     ]),
                     $startedAt,
                     $modelType,
                     $endpoint,
                     $response->status()
                 );
+            }
+
+            try {
+                $this->usageQuota->recordModelSuccess($reservation);
+            } catch (Throwable $exception) {
+                report($exception);
             }
 
             return $this->modelTestResponse(
@@ -252,9 +302,13 @@ class AiModelController extends Controller
                 $response->status()
             );
         } catch (Throwable $exception) {
+            if ($reservation instanceof AiUsageReservation) {
+                $this->usageQuota->releaseModel($reservation);
+            }
+
             return $this->modelTestResponse(
                 false,
-                __('admin.ai_models.test_exception', ['message' => $this->previewResponseBody($exception->getMessage())]),
+                __('admin.ai_models.test_exception', ['message' => $this->redactedRemoteDetail()]),
                 $startedAt,
                 $this->normalizeModelType((string) ($model->model_type ?? 'chat'))
             );
@@ -351,6 +405,7 @@ class AiModelController extends Controller
             'failover_priority',
             'daily_limit',
             'used_today',
+            'usage_date',
             'total_used',
             'status',
             'created_at',
@@ -386,7 +441,7 @@ class AiModelController extends Controller
                 'api_url' => (string) ($model->api_url ?? ''),
                 'failover_priority' => (int) ($model->failover_priority ?? 100),
                 'daily_limit' => (int) ($model->daily_limit ?? 0),
-                'used_today' => (int) ($model->used_today ?? 0),
+                'used_today' => $model->currentUsage(),
                 'total_used' => (int) ($model->total_used ?? 0),
                 'status' => (string) ($model->status ?? 'active'),
                 'max_tokens' => $supportsMaxTokens && $model->max_tokens !== null ? (int) $model->max_tokens : null,
@@ -564,7 +619,7 @@ class AiModelController extends Controller
             $row = DB::selectOne("SELECT extname FROM pg_extension WHERE extname = 'vector' LIMIT 1");
 
             return $row !== null;
-        } catch (\Throwable) {
+        } catch (Throwable) {
             return false;
         }
     }
@@ -754,15 +809,13 @@ class AiModelController extends Controller
                 'model_type' => $modelType,
                 'http_status' => $httpStatus,
                 'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                'endpoint' => $endpoint,
+                'endpoint' => $success ? $endpoint : '',
             ],
         ], $success ? 200 : 422);
     }
 
-    private function previewResponseBody(string $body): string
+    private function redactedRemoteDetail(): string
     {
-        $body = trim(preg_replace('/\s+/u', ' ', $body) ?: $body);
-
-        return mb_strlen($body, 'UTF-8') > 240 ? mb_substr($body, 0, 240, 'UTF-8').'...' : $body;
+        return 'Upstream response details are hidden.';
     }
 }

@@ -4,7 +4,7 @@
 
 > GEOFlow 是一套专门面向 GEO（生成式引擎优化）的开源智能内容工程与多站点分发系统。它把知识库、素材库、提示词、AI 生成任务、审核发布、数据分析、GEOFlow Agent 目标站点包、WordPress REST 渠道、通用 HTTP API 渠道和远端静态页面分发串联为一条可持续运营的工作链路，目标是帮助团队把可信资料沉淀为可管理、可发布、可追踪、可同步到多端的 GEO 内容资产。
 
-[![PHP](https://img.shields.io/badge/PHP-8.2%2B-blue)](https://www.php.net/)
+[![PHP](https://img.shields.io/badge/PHP-8.3%2B-blue)](https://www.php.net/)
 [![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791)](https://www.postgresql.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue)](https://docs.docker.com/compose/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
@@ -13,6 +13,18 @@
 [![GitHub issues](https://img.shields.io/github/issues/yaojingang/GEOFlow)](https://github.com/yaojingang/GEOFlow/issues)
 
 GEOFlow 以 [Apache License 2.0](LICENSE) 开源发布。你可以自由使用、复制、修改和分发本项目，包括商业使用；请保留版权声明和许可证文本，并遵守 Apache-2.0 的专利授权、商标与免责声明条款。
+
+### 匿名使用统计
+
+GEOFlow 支持可关闭的匿名使用统计，用于了解项目部署量、活跃部署、后台日活和版本分布。启用后，首次安装会发送 `installed`，版本变化会发送 `updated`，调度器每天最多发送一次 `heartbeat`；已登录后台页面保留每日一次 `admin_active` Pulse。
+
+服务端事件只包含随机实例 ID、GEOFlow 版本和事件类型；后台 Pulse 额外包含管理员不可逆摘要。域名、页面路径、管理员账号、邮箱、文章内容、Cookie、APP_KEY 和业务密钥不会进入上报载荷。请求失败不会影响安装、升级、调度任务或后台页面；如需关闭，设置：
+
+```dotenv
+GEOFLOW_TELEMETRY_ENABLED=false
+```
+
+默认采集地址为 `https://geoflow-telemetry-gateway.pages.dev/api/pulse`，部署方也可以通过 `GEOFLOW_TELEMETRY_ENDPOINT` 替换为自己的兼容 HTTPS 入口。
 
 ---
 
@@ -33,6 +45,31 @@ GEOFlow 以 [Apache License 2.0](LICENSE) 开源发布。你可以自由使用�
 | 🌍 后台多语言 | 后台支持中文、英文、日语、西班牙语、俄语、葡萄牙语（巴西）切换，并覆盖 2.0 新模块 |
 | 🔔 版本提醒 | 后台可按 `version.json` 检查 GitHub 新版本，并在有新版本时提醒管理员 |
 | 🐳 可直接部署 | **Docker Compose** 一键拉起 PostgreSQL（pgvector）、Redis、应用、队列、调度、Reverb 和生产 Nginx/php-fpm |
+| 🧭 GEOFlow Agent Skill | 仓库内置统一的 `$geoflow` Skill，覆盖产品开发、后台运营、网站前台、主题模板、渠道站点和旧版迁移 |
+
+---
+
+## 🧭 GEOFlow Agent Skill
+
+仓库在 [`.agents/skills/geoflow`](.agents/skills/geoflow/) 内提供统一的 GEOFlow Skill。支持 Agent Skills 的工具打开本项目后可以直接发现它；在 Codex 中可通过 `$geoflow` 调用。
+
+这个统一入口覆盖五种工作模式：
+
+| 模式 | 适用范围 |
+|------|----------|
+| `development` | Laravel 后端、管理后台、API、CLI、队列、迁移和测试 |
+| `operations` | 通过受支持的 CLI、API v1 或登录后的管理界面执行系统操作 |
+| `public_frontend` | 默认网站、Blade 主题、首页模块、线索表单和前台页面 |
+| `channel_frontend` | GEOFlow Agent 目标站点包、渠道能力检查、同步预览和渠道前台设置 |
+| `legacy_migration` | 旧版根目录 PHP 模板、历史包体和旧 Skill 标识迁移 |
+
+它统一替代 `yao-geoflow-cli`、`yao-geoflow-design` 和 `yao-geoflow-template`。如需安装或升级为 Codex 全局 Skill，可在克隆仓库后执行：
+
+```bash
+bash .agents/skills/geoflow/scripts/install_codex_skill.sh
+```
+
+安装器只复制公开清单中的文件，校验暂存包，将当前 `geoflow` 和三个旧 Skill 移到唯一的 `~/.codex/skill-backups/geoflow-<时间戳>.<后缀>/`，随后在同一文件系统内切换新版本。完成后重启 Codex。依赖矩阵、回滚命令和平台边界见 [Skill 安装说明](.agents/skills/geoflow/README.md#installation)。
 
 ---
 
@@ -193,7 +230,7 @@ cp .env.example .env
 # 3. 按需编辑 .env（数据库、Redis、APP_URL、ADMIN_BASE_PATH、REVERB_* 等）
 vi .env
 
-# 4. 构建并启动（含 postgres、redis、init、app、queue、scheduler、reverb）
+# 4. 构建并启动（含 postgres、redis、init、app、三类 queue、scheduler、reverb）
 docker compose build
 docker compose up -d
 ```
@@ -207,7 +244,7 @@ docker compose up -d
 
 生产环境建议使用 **`docker-compose.prod.yml`**，改为 **`Nginx + php-fpm`**，而不是 `php artisan serve`。
 
-如果希望在常见云服务器上自动完成环境自检、Docker 检测、`.env.prod` 生成、容器部署和部署后健康检查，可以使用参考部署脚本：
+全新空库首次部署时，如果希望在常见云服务器上自动完成环境自检、Docker 检测、`.env.prod` 生成、容器部署和部署后健康检查，可以使用参考部署脚本：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yaojingang/GEOFlow/main/deploy-scripts/geoflow-docker-deploy.sh -o geoflow-docker-deploy.sh
@@ -223,17 +260,18 @@ vi .env.prod
 docker compose --env-file .env.prod -f docker-compose.prod.yml build
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d postgres redis
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d init
-docker compose --env-file .env.prod -f docker-compose.prod.yml up -d app web queue scheduler reverb
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d app web queue knowledge-queue system-update-queue scheduler reverb
 ```
 
 - 前台 / 后台统一经 `web`（Nginx）访问
 - PHP 由 `app`（php-fpm）解析
-- **首次安装**：生产 `init` 服务会先执行迁移，再运行 `php artisan geoflow:install`。该命令只在空库首次安装时写入默认后台账号；已有数据的旧库只补安装标记，不会重复写入分类、文章、网站设置、广告或提示词。
+- `APP_URL` 使用 `http://` 时设置 `SESSION_SECURE_COOKIE=false`；启用 HTTPS 后设置为 `true`
+- **首次安装**：生产 `init` 服务会先执行迁移，再运行 `php artisan geoflow:install`。该流程仅用于全新空库；已有数据或迁移历史的实例必须执行 `docs/deployment/DEPLOYMENT.md` 3.1 节的停机排空升级协议。
 - 详细说明见 `docs/deployment/DEPLOYMENT.md`
 
 ### 方式二：本地 PHP 服务器
 
-**前置要求：** PHP **8.2+**，启用 `pdo_pgsql`、`redis` 等 Laravel 常用扩展；本机已安装 **PostgreSQL** 与 **Redis**；已安装 **Composer 2.x**。
+**前置要求：** PHP **8.3+**，启用 `pdo_pgsql`、`redis` 等 Laravel 常用扩展；本机已安装 **PostgreSQL** 与 **Redis**；已安装 **Composer 2.x**。
 
 ```bash
 # 1. 克隆仓库
@@ -248,18 +286,20 @@ composer install --no-interaction --prefer-dist
 php artisan key:generate
 
 # 3. 数据库与存储
-php artisan migrate --force
-php artisan geoflow:install                                            # 首次空库安装；旧库只补初始化标记
+GEOFLOW_SECURITY_FRESH_INSTALL_CONFIRMED=true php artisan migrate --force
+php artisan geoflow:install                                            # 首次空库安装
 php artisan storage:link
 
 # 4. 开发用 HTTP（仅本地调试；生产请用 Nginx + PHP-FPM，站点根目录 public/）
 php artisan serve --host=127.0.0.1 --port=8080
 ```
 
-另开终端启动常驻进程（与 Docker 中 `queue` / `scheduler` / `reverb` 对应）：
+另开终端启动常驻进程（每条 `queue:work` 需要独立终端或进程托管）：
 
 ```bash
-php artisan queue:work redis --queue=geoflow,distribution,default --sleep=1 --tries=1 --timeout=300
+php -d memory_limit=256M artisan queue:work redis --queue=geoflow,distribution,theme-replication,default --sleep=1 --tries=1 --timeout=660 --memory=128 --max-jobs=100 --max-time=3600
+php -d memory_limit=160M artisan queue:work redis --queue=knowledge --sleep=1 --tries=1 --timeout=210 --memory=128 --max-jobs=20 --max-time=1800
+php -d memory_limit=256M artisan queue:work redis --queue=system-updates --sleep=1 --tries=1 --timeout=930 --memory=256 --max-jobs=10 --max-time=3600
 php artisan schedule:work
 php artisan reverb:start
 ```
@@ -273,7 +313,7 @@ php artisan reverb:start
 
 | 组件 | 说明 |
 |------|------|
-| PHP | **8.2+**（Docker 镜像可为 8.4） |
+| PHP | **8.3+**（Docker 镜像可为 8.4） |
 | 扩展 | Laravel 常规扩展；PostgreSQL 需 `pdo_pgsql`；Redis 队列需 `redis` |
 | Composer | 2.x |
 | 数据库 | **PostgreSQL**（推荐 **pgvector**，与 `docker-compose.yml` 中镜像一致） |
@@ -328,7 +368,9 @@ php artisan geoflow:admin-unlock admin
 | `redis` | Redis 7 |
 | `init` | 一次性初始化（`restart: "no"`） |
 | `app` | `php artisan serve`，映射 **`${APP_PORT:-18080}:8080`** |
-| `queue` | `queue:work redis` |
+| `queue` | 文章生成、分发、主题复刻与默认队列 |
+| `knowledge-queue` | 知识库解析与向量化队列，独立内存上限 |
+| `system-update-queue` | 系统更新与回滚队列，独立长超时 |
 | `scheduler` | `schedule:work` |
 | `reverb` | WebSocket，映射 **`${REVERB_EXPOSE_PORT:-18081}:8080`** |
 
@@ -339,7 +381,7 @@ php artisan geoflow:admin-unlock admin
 | 变量 | 默认 | 含义 |
 |------|------|------|
 | `COMPOSER_ON_START` | `true` | 容器启动时执行 `composer install` |
-| `AUTO_MIGRATE` | `true` | 每次启动执行 `php artisan migrate --force` |
+| `AUTO_MIGRATE` | `true` | 启动时执行 `php artisan migrate --force`；已有部署遇到安全迁移时仍须先完成停机排空协议 |
 | `AUTO_INIT_ONCE` | 仅 `init` 为 `true` | 执行 `migrate` + `geoflow:install`，由安装命令判断是否空库 |
 | `AUTO_INSTALL_ONCE` | `false` | 已完成迁移后单独执行一次 `geoflow:install`，常驻服务不建议开启 |
 
@@ -347,7 +389,7 @@ php artisan geoflow:admin-unlock admin
 
 Compose 将 **`./storage`** 与 **`./.env`** 挂载进容器；应用代码在镜像内。若要用于正式生产，请改用仓库新增的 **`docker-compose.prod.yml`**（`Nginx + php-fpm`），并参见 `docs/deployment/DEPLOYMENT.md`。
 
-**升级建议：** `git pull` → `docker compose build` → `docker compose up -d`。
+**已有部署升级：** 禁止直接执行 `git pull` → `build` → `up -d`。请完整执行 [`docs/deployment/DEPLOYMENT.md` 3.1 节](docs/deployment/DEPLOYMENT.md#31-受管图片删除升级门禁)的停机排空、安全迁移和 readiness 流程。
 
 ---
 
