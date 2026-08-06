@@ -57,6 +57,11 @@
             "@php artisan config:clear --ansi",
             "@php artisan test --compact tests/Unit/ReleaseVersionMappingTest.php"
         ],
+        "nanshanlin:sso-check": [
+            "@php artisan config:clear --ansi",
+            "@php artisan route:list --name=admin.sso-login",
+            "@php artisan test --compact tests/Feature/AdminSsoLoginTest.php"
+        ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"

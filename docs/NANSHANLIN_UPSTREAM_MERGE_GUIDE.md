@@ -82,13 +82,14 @@ docker-compose.prod.yml
 .env.prod.example
 ```
 
-5. 合并后执行本地测试：
+5. 合并后必须先执行南山林 SSO 门禁，再运行其他本地测试：
 
 ```bash
+composer nanshanlin:sso-check
 vendor/bin/pint --dirty
-php artisan test --compact tests/Feature/AdminSsoLoginTest.php
-php artisan route:list --name=admin.sso-login
 ```
+
+`composer nanshanlin:sso-check` 会同时校验 SSO 路由和完整的登录、重放防护、管理员约束测试。该命令未通过时，不得打包或发布合并后的 GEOFlow。
 
 6. 启动或重建本地容器后验收：
 
@@ -113,4 +114,3 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml ps
 - 不提交 `.env`、`.env.prod`、`docker-data/`、`storage/`、`backups/`。
 - 每次升级前先备份 PostgreSQL、Redis、GEOFlow `storage/` 和官网 SQLite/媒体目录。
 - 如果官方版本改动了登录、路由、URL 生成、Asset URL、队列或分发模块，必须重新完整验证 SSO 和官网分发。
-
