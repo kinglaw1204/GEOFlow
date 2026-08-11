@@ -99,7 +99,7 @@
                     </button>
                 </div>
 
-                <form id="promptForm" method="POST" action="{{ route('admin.ai-prompts.store') }}" class="space-y-6">
+                <form id="promptForm" method="POST" action="{{ \App\Support\AdminWeb::routePath('admin.ai-prompts.store') }}" class="space-y-6">
                     @csrf
                     <input type="hidden" name="_method" id="promptFormMethod" value="POST">
 
@@ -145,9 +145,9 @@
     <script>
         const createPromptTitle = @json(__('admin.ai_prompts.modal_create'));
         const editPromptTitle = @json(__('admin.ai_prompts.modal_edit'));
-        const createPromptAction = @json(route('admin.ai-prompts.store'));
-        const updateActionTemplate = @json(route('admin.ai-prompts.update', ['promptId' => '__ID__']));
-        const deleteActionTemplate = @json(route('admin.ai-prompts.delete', ['promptId' => '__ID__']));
+        const createPromptAction = @json(\App\Support\AdminWeb::routePath('admin.ai-prompts.store'));
+        const updateActionTemplate = @json(\App\Support\AdminWeb::routePath('admin.ai-prompts.update', ['promptId' => '__ID__']));
+        const deleteActionTemplate = @json(\App\Support\AdminWeb::routePath('admin.ai-prompts.delete', ['promptId' => '__ID__']));
         const deletePromptTemplate = @json(__('admin.ai_prompts.confirm_delete', ['name' => '__NAME__']));
 
         function showCreatePromptModal() {
@@ -195,4 +195,3 @@
         });
     </script>
 @endpush
-
