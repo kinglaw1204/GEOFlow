@@ -113,7 +113,8 @@ fi
 
 log "验证版本、SSO 路由、容器和本机入口"
 sudo docker exec geoflow-app-prod grep -q '"version": "2.3.0"' /var/www/html/version.json || fail "容器内版本不是2.3.0"
-sudo docker exec geoflow-app-prod php artisan route:list --name=admin.sso-login | grep -q 'admin.sso-login' || fail "SSO 路由不存在"
+sso_routes="$(sudo docker exec geoflow-app-prod php artisan route:list --name=admin.sso-login)"
+grep -q 'admin.sso-login' <<<"$sso_routes" || fail "SSO 路由不存在"
 for container in geoflow-postgres-prod geoflow-redis-prod geoflow-app-prod geoflow-web-prod geoflow-queue-prod geoflow-scheduler-prod geoflow-reverb-prod; do
   sudo docker ps --format '{{.Names}} {{.Status}}' | grep -Eq "^${container} .*Up" || fail "容器未运行：$container"
 done
