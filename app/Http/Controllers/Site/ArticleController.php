@@ -40,13 +40,14 @@ class ArticleController extends Controller
         $rawContent = (string) $article->content;
         $body = ArticleHtmlPresenter::stripLeadingTitleHeading($rawContent, (string) $article->title);
         $excerpt = trim((string) $article->excerpt);
-        if ($excerpt !== '') {
+        if ($excerpt !== '' && preg_match('/<[^>]+>|^\s*#{1,6}\s+/mu', $excerpt) === 1) {
             $excerpt = ArticleHtmlPresenter::cleanExcerpt($excerpt, (string) $article->title, 180);
         }
 
         $contentHtml = ArticleTextAdPicker::injectIntoContentHtml(
             ArticleHtmlPresenter::markdownToHtml($body)
         );
+        $excerptPlain = $excerpt;
 
         $tags = $this->keywordTags((string) $article->keywords);
 
@@ -59,7 +60,7 @@ class ArticleController extends Controller
             ->get(['id', 'title', 'slug']);
 
         $pageTitle = (string) $article->title;
-        $pageDescription = $excerpt !== '' ? $excerpt : ArticleHtmlPresenter::cardSummary($article, 160);
+        $pageDescription = $excerptPlain !== '' ? $excerptPlain : ArticleHtmlPresenter::cardSummary($article, 160);
         $pageKeywords = implode(',', $tags);
 
         $stickyAd = ArticleStickyAdPicker::firstEnabled();
@@ -68,7 +69,7 @@ class ArticleController extends Controller
             'activeNav' => 'article',
             'article' => $article,
             'contentHtml' => $contentHtml,
-            'excerptPlain' => $excerpt,
+            'excerptPlain' => $excerptPlain,
             'tags' => $tags,
             'relatedArticles' => $related,
             'siteTitle' => $siteTitle,

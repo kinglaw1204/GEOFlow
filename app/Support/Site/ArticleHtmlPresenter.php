@@ -106,6 +106,18 @@ final class ArticleHtmlPresenter
         return trim(implode(' ', $summaryLines));
     }
 
+    private static function stripLeadingMarkdownHeading(string $content): string
+    {
+        $withoutHeading = preg_replace(
+            '/^\s*#{1,6}[ \t]+[^\r\n]+(?:\r?\n)+/u',
+            '',
+            $content,
+            1
+        ) ?? $content;
+
+        return trim($withoutHeading) !== '' ? $withoutHeading : $content;
+    }
+
     private static function toPlainLine(string $text): string
     {
         $text = preg_replace('/!\[[^\]]*\]\([^)]+\)/u', ' ', $text) ?? $text;
@@ -119,6 +131,7 @@ final class ArticleHtmlPresenter
     private static function excerptSourcePlainText(string $text, string $title): string
     {
         $text = self::stripLeadingTitleHeading($text, $title);
+        $text = self::stripLeadingMarkdownHeading($text);
         $plain = self::toPlainLine($text);
         if ($title !== '') {
             $plain = preg_replace('/^'.preg_quote($title, '/').'\s*/u', '', $plain, 1) ?? $plain;
