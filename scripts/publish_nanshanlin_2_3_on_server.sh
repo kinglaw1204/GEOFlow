@@ -83,7 +83,33 @@ sudo docker compose --env-file .env.prod -f "$COMPOSE_FILE" run --rm --no-deps a
 log "启动全部 GEOFlow 服务并清理缓存"
 sudo docker compose --env-file .env.prod -f "$COMPOSE_FILE" up -d --force-recreate
 sudo docker exec geoflow-app-prod php artisan optimize:clear
-sudo docker exec geoflow-app-prod php artisan geoflow:security-audit
+
+log "执行只读安全审计；仅允许已确认的 MANAGED_REGISTRY_ORPHAN 中风险项"
+audit_json="$(sudo docker exec geoflow-app-prod php artisan geoflow:security-audit --json 2>/dev/null || true)"
+[[ -n "$audit_json" ]] || fail "安全审计没有返回可读结果"
+if ! printf '%s' "$audit_json" | sudo docker exec -i geoflow-app-prod php -r '
+    $report = json_decode(stream_get_contents(STDIN), true);
+    if (! is_array($report) || ! isset($report["summary"], $report["findings"]) || ! is_array($report["findings"])) {
+        exit(2);
+    }
+    if ((int) ($report["summary"]["critical"] ?? -1) !== 0 || (int) ($report["summary"]["high"] ?? -1) !== 0) {
+        exit(3);
+    }
+    foreach ($report["findings"] as $finding) {
+        if (($finding["code"] ?? "") !== "MANAGED_REGISTRY_ORPHAN" || ($finding["severity"] ?? "") !== "medium") {
+            exit(4);
+        }
+    }
+'; then
+  printf '%s\n' "$audit_json" >&2
+  fail "安全审计存在未获授权的风险项，停止发布"
+fi
+if grep -q '"code":"MANAGED_REGISTRY_ORPHAN"' <<<"$audit_json"; then
+  log "WARN 已按授权保留 MANAGED_REGISTRY_ORPHAN 中风险项；不删除登记或图片，不触发版本回滚"
+  printf '%s\n' "$audit_json"
+else
+  log "安全审计通过"
+fi
 
 log "验证版本、SSO 路由、容器和本机入口"
 sudo docker exec geoflow-app-prod grep -q '"version": "2.3.0"' /var/www/html/version.json || fail "容器内版本不是2.3.0"
