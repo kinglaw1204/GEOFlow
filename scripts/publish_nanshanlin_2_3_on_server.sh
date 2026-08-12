@@ -46,7 +46,8 @@ new_dir="$work_dir/GEOFlow"
 [[ -f "$new_dir/version.json" && -f "$new_dir/$COMPOSE_FILE" ]] || fail "升级包结构不完整"
 grep -q '"version": "2.3.0"' "$new_dir/version.json" || fail "升级包不是 GEOFlow 2.3.0"
 grep -q 'GEOFLOW_SSO_SECRET' "$new_dir/.env.prod.example" || fail "升级包缺少南山林 SSO 配置"
-grep -q 'admin.sso-login' "$new_dir/routes/web.php" || fail "升级包缺少南山林 SSO 路由"
+grep -q "Route::get('sso-login'" "$new_dir/routes/web.php" || fail "升级包缺少南山林 SSO 路由定义"
+grep -q 'function ssoLogin' "$new_dir/app/Http/Controllers/Admin/AdminAuthController.php" || fail "升级包缺少南山林 SSO 控制器"
 
 set -a
 source "$APP_DIR/.env.prod"
