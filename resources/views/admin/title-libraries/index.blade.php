@@ -197,7 +197,12 @@
                     {{ __('admin.title_libraries.modal_import') }}
                     <span id="import-library-name" class="text-green-600"></span>
                 </h3>
-                <form method="POST" id="import-form">
+                <form
+                    method="POST"
+                    id="import-form"
+                    action="{{ route('admin.title-libraries.index', [], false) }}"
+                    data-import-action-template="{{ route('admin.title-libraries.import', ['libraryId' => '__LIBRARY_ID__'], false) }}"
+                >
                     @csrf
                     <div class="space-y-4">
                         <div>
@@ -239,7 +244,8 @@
 
         function showImportModal(libraryId, libraryName) {
             const importForm = document.getElementById('import-form');
-            importForm.action = `{{ route('admin.title-libraries.index') }}/${libraryId}/import`;
+            const importActionTemplate = importForm.dataset.importActionTemplate;
+            importForm.setAttribute('action', importActionTemplate.replace('__LIBRARY_ID__', encodeURIComponent(String(libraryId))));
             document.getElementById('import-library-name').textContent = libraryName;
             document.getElementById('import-modal').classList.remove('hidden');
         }

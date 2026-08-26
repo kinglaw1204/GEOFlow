@@ -274,6 +274,11 @@ class DistributionOrchestrator
             return false;
         }
 
+        $this->log('info', '发送前正文检测完成', $channel->id, $distribution->id, $article->id, array_merge(
+            ['event' => 'distribution.content_inspected'],
+            is_array($payload['_distribution_diagnostics'] ?? null) ? $payload['_distribution_diagnostics'] : []
+        ));
+
         return $this->channelOperationLeaseService->run(
             $channel,
             'article_'.(string) $distribution->action,
@@ -454,6 +459,13 @@ class DistributionOrchestrator
             : hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '');
 
         [$distribution, $channel] = $this->claimImmediateAction($distribution, $action, $payloadHash);
+
+        if ($action !== 'delete') {
+            $this->log('info', '发送前正文检测完成', $channel->id, $distribution->id, $article->id, array_merge(
+                ['event' => 'distribution.content_inspected'],
+                is_array($payload['_distribution_diagnostics'] ?? null) ? $payload['_distribution_diagnostics'] : []
+            ));
+        }
 
         $this->channelOperationLeaseService->run(
             $channel,

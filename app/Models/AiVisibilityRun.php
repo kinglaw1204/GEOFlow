@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -82,5 +83,12 @@ class AiVisibilityRun extends Model
     public function sources(): HasMany
     {
         return $this->hasMany(AiVisibilitySource::class, 'ai_visibility_run_id');
+    }
+
+    public function scopeOfficial(Builder $query): Builder
+    {
+        return $query->where(function (Builder $query): void {
+            $query->whereNull('provider_key')->orWhere('provider_key', 'not like', 'demo_%');
+        });
     }
 }

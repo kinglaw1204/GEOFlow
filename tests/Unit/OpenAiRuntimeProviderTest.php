@@ -69,6 +69,16 @@ class OpenAiRuntimeProviderTest extends TestCase
         $this->assertSame('', OpenAiRuntimeProvider::normalizeGeneratedText($content));
     }
 
+    public function test_it_does_not_duplicate_a_choice_that_contains_delta_and_accumulated_message(): void
+    {
+        $content = implode("\n", [
+            'data: {"id":"1","object":"chat.completion.chunk","choices":[{"delta":{"content":"完整正文"},"message":{"content":"完整正文"},"text":"完整正文"}]}',
+            'data: [DONE]',
+        ]);
+
+        $this->assertSame('完整正文', OpenAiRuntimeProvider::normalizeGeneratedText($content));
+    }
+
     public function test_it_resolves_embedding_base_urls_without_forcing_chat_endpoint(): void
     {
         $this->assertSame(

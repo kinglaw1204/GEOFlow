@@ -316,7 +316,7 @@ class TitleLibraryController extends Controller
             $message .= __('admin.title_detail.message.import_skip', ['count' => $duplicateCount]);
         }
 
-        return redirect()->route('admin.title-libraries.detail', ['libraryId' => $libraryId])->with('message', $message);
+        return redirect(AdminWeb::routePath('admin.title-libraries.detail', ['libraryId' => $libraryId]))->with('message', $message);
     }
 
     /**

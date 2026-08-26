@@ -25,7 +25,8 @@ class DistributionPayloadBuilder
         ]);
         $title = (string) $article->title;
         $content = (string) $article->content;
-        $body = ArticleHtmlPresenter::stripLeadingTitleHeading($content, $title);
+        $summaryCount = preg_match_all('/^\s*#{1,6}\s*核心摘要\s*$/um', $content) ?: 0;
+        $body = $this->deduplicateArticle(ArticleHtmlPresenter::stripLeadingTitleHeading($content, $title));
         $contentHtml = ArticleHtmlPresenter::markdownToHtml($body);
         $excerpt = ArticleHtmlPresenter::cleanExcerpt((string) ($article->excerpt ?? ''), $title, 180);
         if ($excerpt === '') {
@@ -37,12 +38,18 @@ class DistributionPayloadBuilder
             'version' => '1.0',
             'source' => 'geoflow',
             'event' => 'article.publish',
+            '_distribution_diagnostics' => [
+                'content_length_before_send' => mb_strlen($content, 'UTF-8'),
+                'core_summary_count_before_send' => $summaryCount,
+                'content_hash_before_send' => hash('sha256', $content),
+                'content_was_deduplicated' => $body !== ArticleHtmlPresenter::stripLeadingTitleHeading($content, $title),
+            ],
             'article' => [
                 'id' => (int) $article->id,
                 'title' => $title,
                 'slug' => (string) $article->slug,
                 'excerpt' => $excerpt,
-                'content' => $content,
+                'content' => $body,
                 'content_format' => 'markdown',
                 'content_html' => $contentHtml,
                 'hero_image_url' => $heroImageUrl,
@@ -71,6 +78,80 @@ class DistributionPayloadBuilder
                 'images' => $this->extractImageAssets($content, $contentHtml, $heroImageUrl !== '' ? [$heroImageUrl] : []),
             ],
         ];
+    }
+
+    private function deduplicateArticle(string $content): string
+    {
+        $content = $this->deduplicateCoreSummaries($content);
+        $blocks = preg_split('/\R{2,}/u', trim($content)) ?: [];
+        $blocks = array_values(array_filter(array_map('trim', $blocks), static fn (string $block): bool => $block !== ''));
+        if (count($blocks) < 4) {
+            return $content;
+        }
+
+        foreach ([0, 1] as $offset) {
+            $remaining = count($blocks) - $offset;
+            if ($remaining < 4 || $remaining % 2 !== 0) {
+                continue;
+            }
+            $half = intdiv($remaining, 2);
+            $first = implode("\n\n", array_slice($blocks, $offset, $half));
+            $second = implode("\n\n", array_slice($blocks, $offset + $half));
+            if (min(mb_strlen($this->normalizedDuplicateText($first)), mb_strlen($this->normalizedDuplicateText($second))) < 100) {
+                continue;
+            }
+            if ($this->similarity($first, $second) >= 0.9) {
+                return implode("\n\n", array_merge(array_slice($blocks, 0, $offset), array_slice($blocks, $offset, $half)));
+            }
+        }
+
+        return $content;
+    }
+
+    private function deduplicateCoreSummaries(string $content): string
+    {
+        preg_match_all('/^\s*#{1,6}\s*核心摘要\s*$([\s\S]*?)(?=^\s*#{1,6}\s+\S|\z)/um', $content, $matches, PREG_OFFSET_CAPTURE);
+        if (count($matches[0] ?? []) !== 2) {
+            return $content;
+        }
+        $first = trim((string) ($matches[1][0][0] ?? ''));
+        $second = trim((string) ($matches[1][1][0] ?? ''));
+        if (min(mb_strlen($this->normalizedDuplicateText($first)), mb_strlen($this->normalizedDuplicateText($second))) < 30 || $this->similarity($first, $second) < 0.88) {
+            return $content;
+        }
+        $start = (int) $matches[0][1][1];
+        $length = strlen((string) $matches[0][1][0]);
+
+        return trim(substr($content, 0, $start)."\n\n".substr($content, $start + $length));
+    }
+
+    private function normalizedDuplicateText(string $value): string
+    {
+        $value = mb_strtolower($value, 'UTF-8');
+        $value = preg_replace('/!\[[^\]]*\]\([^)]+\)/u', '', $value) ?? $value;
+        $value = preg_replace('/^#{1,6}\s*/um', '', $value) ?? $value;
+
+        return preg_replace('/[\s\p{P}\p{S}]+/u', '', $value) ?? $value;
+    }
+
+    private function similarity(string $left, string $right): float
+    {
+        $left = $this->normalizedDuplicateText($left);
+        $right = $this->normalizedDuplicateText($right);
+        if ($left === '' || $right === '') {
+            return 0.0;
+        }
+        if ($left === $right) {
+            return 1.0;
+        }
+        $shorter = mb_strlen($left) <= mb_strlen($right) ? $left : $right;
+        $longer = $shorter === $left ? $right : $left;
+        if (str_contains($longer, $shorter)) {
+            return mb_strlen($shorter) / max(1, mb_strlen($longer));
+        }
+        similar_text($left, $right, $percent);
+
+        return $percent / 100;
     }
 
     /**

@@ -230,11 +230,18 @@ final class OpenAiRuntimeProvider
                 $delta = $choice['delta'] ?? [];
                 if (is_array($delta) && array_key_exists('content', $delta)) {
                     $segments[] = self::stringifyContentPart($delta['content']);
+
+                    // Some OpenAI-compatible gateways include both the incremental
+                    // delta and the accumulated message/text in the same SSE choice.
+                    // They describe the same completion, so only consume the delta.
+                    continue;
                 }
 
                 $message = $choice['message'] ?? [];
                 if (is_array($message) && array_key_exists('content', $message)) {
                     $segments[] = self::stringifyContentPart($message['content']);
+
+                    continue;
                 }
 
                 if (array_key_exists('text', $choice)) {

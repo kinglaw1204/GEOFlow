@@ -365,6 +365,23 @@ class AdminAiVisibilityAnalyticsTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_ai_visibility_excludes_demo_provider_runs_from_official_metrics(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-10 12:00:00'));
+        config()->set('geoflow.site_name', 'GEOFlow');
+
+        $official = $this->completedRun('护墙板品牌', AiVisibilityRun::PROVIDER_DOUBAO_SEARCH_CUSTOM, 'GEOFlow 已被推荐。', 'positive', '2026-07-10 09:00:00', []);
+        $demo = $this->completedRun('演示关键词', AiVisibilityRun::PROVIDER_DOUBAO_SEARCH_CUSTOM, 'GEOFlow 已被推荐。', 'positive', '2026-07-10 10:00:00', []);
+        $demo->update(['provider_key' => 'demo_doubao_search']);
+
+        $overview = app(AiVisibilityAnalyticsService::class)->overview();
+
+        $this->assertSame(1, $overview['polling']['runs']);
+        $this->assertSame(1, $overview['polling']['sampled_runs']);
+        $this->assertSame('护墙板品牌', $overview['latest_runs'][0]['keyword']);
+        Carbon::setTestNow();
+    }
+
     /**
      * @param  list<array{title: string, domain: string, rank: int, snippet: string}>  $sources
      */

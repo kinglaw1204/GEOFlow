@@ -78,6 +78,21 @@ Schedule::command('geoflow:prune-expired-cache')
     ->onOneServer()
     ->withoutOverlapping(10);
 
+if (config('geoflow.website_analytics.enabled')) {
+    Schedule::command('geoflow:sync-website-analytics')
+        ->everyFiveMinutes()
+        ->onOneServer()
+        ->withoutOverlapping(10);
+}
+
+$aiVisibilityKeywords = (array) config('geoflow.ai_visibility.scheduled_keywords', []);
+if ($aiVisibilityKeywords !== []) {
+    Schedule::command('geoflow:ai-visibility:collect', $aiVisibilityKeywords)
+        ->dailyAt((string) config('geoflow.ai_visibility.schedule_time', '04:10'))
+        ->onOneServer()
+        ->withoutOverlapping(120);
+}
+
 /**
  * 匿名部署活跃心跳：每天一次；同版本同日重复执行会在本地跳过。
  */

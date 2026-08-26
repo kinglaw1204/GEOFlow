@@ -16,6 +16,7 @@ use App\Models\UrlImportJob;
 use App\Models\UrlImportJobLog;
 use App\Services\GeoFlow\KnowledgeChunkSyncCoordinator;
 use App\Services\GeoFlow\ManagedImageFileService;
+use App\Support\AdminWeb;
 use App\Support\GeoFlow\ApiKeyCrypto;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -1513,6 +1514,15 @@ class AdminMaterialsPagesTest extends TestCase
             'is_ai_generated' => 0,
         ]);
 
+        $this->actingAs($admin, 'admin')
+            ->get(route('admin.title-libraries.index'))
+            ->assertOk()
+            ->assertSee('action="'.route('admin.title-libraries.index', [], false).'"', false)
+            ->assertSee('data-import-action-template="'.route('admin.title-libraries.import', ['libraryId' => '__LIBRARY_ID__'], false).'"', false)
+            ->assertSee('importForm.dataset.importActionTemplate', false)
+            ->assertSee("importForm.setAttribute('action'", false)
+            ->assertSee('encodeURIComponent(String(libraryId))', false);
+
         $this->actingAs($admin, 'admin')->post(route('admin.keyword-libraries.keywords.store', ['libraryId' => (int) $keywordLibrary->id]), [
             'keyword' => '增长策略',
         ])->assertRedirect(route('admin.keyword-libraries.detail', ['libraryId' => (int) $keywordLibrary->id]));
@@ -1532,7 +1542,7 @@ class AdminMaterialsPagesTest extends TestCase
 
         $this->actingAs($admin, 'admin')->post(route('admin.title-libraries.import', ['libraryId' => (int) $titleLibrary->id]), [
             'titles_text' => "标题A|关键词A\n标题B",
-        ])->assertRedirect(route('admin.title-libraries.detail', ['libraryId' => (int) $titleLibrary->id]));
+        ])->assertRedirect(AdminWeb::routePath('admin.title-libraries.detail', ['libraryId' => (int) $titleLibrary->id]));
         $this->assertDatabaseHas('titles', [
             'library_id' => (int) $titleLibrary->id,
             'title' => '标题A',

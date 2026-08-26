@@ -127,6 +127,18 @@ return [
         'ark_responses_path' => env('GEOFLOW_ARK_RESPONSES_PATH', '/responses'),
         'default_search_count' => max(1, min(20, (int) env('GEOFLOW_AI_VISIBILITY_SEARCH_COUNT', 10))),
         'default_analysis_max_tokens' => max(512, (int) env('GEOFLOW_AI_VISIBILITY_ANALYSIS_MAX_TOKENS', 4096)),
+        'scheduled_keywords' => array_values(array_filter(array_map('trim', explode(',', (string) env('GEOFLOW_AI_VISIBILITY_KEYWORDS', ''))))),
+        'schedule_time' => trim((string) env('GEOFLOW_AI_VISIBILITY_SCHEDULE_TIME', '04:10')) ?: '04:10',
+    ],
+
+    // 官网正式访问/线索数据由 GEOFlow 主动增量拉取；密钥必须与官网一致。
+    'website_analytics' => [
+        'enabled' => filter_var(env('GEOFLOW_WEBSITE_ANALYTICS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'base_url' => rtrim(trim((string) env('GEOFLOW_WEBSITE_ANALYTICS_URL', '')), '/'),
+        'secret' => trim((string) env('GEOFLOW_ANALYTICS_SYNC_SECRET', '')),
+        'site_key' => trim((string) env('GEOFLOW_WEBSITE_SITE_KEY', 'nanshanlin-website')) ?: 'nanshanlin-website',
+        'batch_limit' => max(1, min(500, (int) env('GEOFLOW_WEBSITE_ANALYTICS_BATCH_LIMIT', 200))),
+        'timeout_seconds' => max(5, (int) env('GEOFLOW_WEBSITE_ANALYTICS_TIMEOUT', 30)),
     ],
 
     // 本地上传根目录（绝对路径）
